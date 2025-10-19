@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Журнал оценок — вход</title>
+  <style>
+    :root{--b:#e5e7eb;--bg:#f8fafc;--muted:#6b7280;--pri:#2563eb;--pri2:#dbeafe}
+    *{box-sizing:border-box} body{font-family:system-ui,Arial,sans-serif;margin:0;background:var(--bg);color:#0f172a}
+    h1,h2{margin:0 0 12px 0}
+    .container{max-width:1100px;margin:24px auto;padding:0 16px}
+    .grid{display:grid;grid-template-columns:320px 1fr;gap:16px}
+    .card{border:1px solid var(--b);border-radius:12px;background:#fff;padding:14px}
+    .row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+    input,select,button{padding:10px;border:1px solid var(--b);border-radius:10px;font-size:14px;background:#fff}
+    input,select{min-width:160px} button{cursor:pointer}
+    button.primary{background:var(--pri);color:#fff;border-color:var(--pri)}
+    .muted{color:var(--muted)} .note{font-size:12px;color:var(--muted);margin-top:8px}
+    .student{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px;border:1px solid var(--b);
+      border-radius:10px;margin:6px 0;background:#fff}
+    .student.active{background:var(--pri2);border-color:var(--pri)}
+    table{width:100%;border-collapse:collapse;margin-top:8px} th,td{border-bottom:1px solid var(--b);padding:6px 8px;text-align:left}
+    .auth-wrap{display:grid;grid-template-columns:1fr 1fr; gap:16px}
+    .right{display:flex;justify-content:flex-end;gap:8px;align-items:center}
+    .pill{padding:6px 10px;border:1px solid var(--b);border-radius:999px;background:#fff}
+    @media(max-width:980px){.grid{grid-template-columns:1fr}.auth-wrap{grid-template-columns:1fr} .right{justify-content:flex-start; margin-top:8px}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+      <div>
+        <h1>Журнал оценок</h1>
+        <div class="muted">Вход по email и паролю (Firebase Auth)</div>
+      </div>
+      <div class="right">
+        <span id="who" class="muted pill"></span>
+        <button id="logoutBtn" style="display:none">Выйти</button>
+      </div>
+    </div>
+
+    <!-- Блок авторизации -->
+    <div id="authSection" class="card">
+      <div class="auth-wrap">
+        <div class="card" style="border:none;padding:0">
+          <h2>Войти</h2>
+          <div class="row"><input id="loginEmail" placeholder="email" type="email"/></div>
+          <div class="row"><input id="loginPass"  placeholder="пароль" type="password"/></div>
+          <div class="row">
+            <button id="loginBtn" class="primary">Войти</button>
+            <button id="resetBtn">Забыли пароль?</button>
+          </div>
+          <div id="loginMsg" class="note"></div>
+        </div>
+
+        <div class="card" style="border:none;padding:0">
+          <h2>Регистрация</h2>
+          <div class="row"><input id="regEmail" placeholder="email" type="email"/></div>
+          <div class="row"><input id="regPass"  placeholder="пароль (мин. 6 символов)" type="password"/></div>
+          <div class="row"><button id="regBtn">Создать аккаунт</button></div>
+          <div id="regMsg" class="note"></div>
+        </div>
+      </div>
+
+      <div class="note">
+        Рекомендация: ограничьте доступ правилами Firestore по email адресам (см. инструкцию).
+      </div>
+    </div>
+
+    <!-- Основное приложение (после входа) -->
+    <div id="appSection" style="display:none">
+      <div class="grid">
+        <!-- левая колонка -->
+        <div class="card">
+          <h2>Ученики</h2>
+          <div class="row">
+            <input id="newName" placeholder="Имя Фамилия"/>
+            <button id="addStudent" class="primary">Добавить</button>
+          </div>
+          <div id="students"></div>
+        </div>
+
+        <!-- правая колонка -->
+        <div class="card" id="detail"><div class="muted">Сначала выберите ученика слева</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase SDK (модульный) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import {
+      getAuth, onAuthStateChanged,
+      signInWithEmailAndPassword, createUserWithEmailAndPassword,
+      sendPasswordResetEmail, signOut
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import {
+      getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc,
+      onSnapshot, orderBy, query, writeBatch, where
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // 1) ВСТАВЬ СВОЙ firebaseConfig ИЗ КОНСОЛИ FIREBASE
+    const firebaseConfig = {
+  apiKey: "AIzaSyBxvXHH9WRWz6Ma7vENJcZF40sQ39-t_pU",
+  authDomain: "grades-app-1b88e.firebaseapp.com",
+  projectId: "grades-app-1b88e",
+  storageBucket: "grades-app-1b88e.appspot.com",
+  messagingSenderId: "184824916315",
+  appId: "1:184824916315:web:2120d167b06395a88d27e",
+  measurementId: "G-RP9XHDSXZJ"
+};
+
+    const app  = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db   = getFirestore(app);
+
+    // ===== UI helper
+    const $ = s => document.querySelector(s);
+    const authSection = $("#authSection");
+    const appSection  = $("#appSection");
+    const who         = $("#who");
+    const logoutBtn   = $("#logoutBtn");
+
+    // ===== Firestore refs
+    const colStudents = () => collection(db, "class", "shared", "students");
+    const gradesCol   = (studentId) => collection(doc(colStudents(), studentId), "grades");
+    const subjectsCol = (studentId) => collection(doc(colStudents(), studentId), "subjects");
+
+    // ===== Auth state
+    onAuthStateChanged(auth, (user)=>{
+      if (user) {
+        who.textContent = user.email || "(без email)";
+        logoutBtn.style.display = "inline-block";
+        authSection.style.display = "none";
+        appSection.style.display  = "block";
+        startStudentsListener();
+      } else {
+        who.textContent = "";
+        logoutBtn.style.display = "none";
+        appSection.style.display  = "none";
+        authSection.style.display = "block";
+        stopStudentsListener();
+      }
+    });
+
+    logoutBtn.onclick = ()=> signOut(auth);
+
+    // ===== Login/Register/Reset
+    $("#loginBtn").onclick = async ()=>{
+      $("#loginMsg").textContent = "";
+      try {
+        await signInWithEmailAndPassword(auth, $("#loginEmail").value, $("#loginPass").value);
+      } catch (e) {
+        $("#loginMsg").textContent = "Ошибка входа: " + (e.message || e);
+      }
+    };
+
+    $("#regBtn").onclick = async ()=>{
+      $("#regMsg").textContent = "";
+      try {
+        await createUserWithEmailAndPassword(auth, $("#regEmail").value, $("#regPass").value);
+        $("#regMsg").textContent = "Аккаунт создан. Теперь войдите.";
+      } catch (e) {
+        $("#regMsg").textContent = "Ошибка регистрации: " + (e.message || e);
+      }
+    };
+
+    $("#resetBtn").onclick = async ()=>{
+      $("#loginMsg").textContent = "";
+      try {
+        await sendPasswordResetEmail(auth, $("#loginEmail").value);
+        $("#loginMsg").textContent = "Письмо для сброса пароля отправлено.";
+      } catch (e) {
+        $("#loginMsg").textContent = "Ошибка: " + (e.message || e);
+      }
+    };
+
+    // ===== Students + grades
+    let unsubStudents = null, unsubGrades = null, unsubSubjects = null;
+    let activeStudentId = null;
+    let subjects = []; // список предметов для выбранного ученика
+
+    function stopStudentsListener(){
+      unsubStudents && unsubStudents(); unsubStudents = null;
+      unsubGrades && unsubGrades();     unsubGrades = null;
+      unsubSubjects && unsubSubjects(); unsubSubjects = null;
+    }
+
+    function startStudentsListener(){
+      stopStudentsListener();
+      const q = query(colStudents(), orderBy("name"));
+      unsubStudents = onSnapshot(q, snap=>{
+        const box = $("#students"); box.innerHTML="";
+        snap.forEach(d=>{
+          const s = { id: d.id, ...d.data() };
+          const row = document.createElement("div");
+          row.className = "student" + (s.id === activeStudentId ? " active" : "");
+
+          const btn = document.createElement("button");
+          btn.textContent = s.name;
+          btn.style.flex = "1";
+          btn.onclick = ()=> showStudent(s.id);
+
+          const rename = document.createElement("button");
+          rename.textContent = "✏️";
+          rename.title = "Переименовать";
+          rename.onclick = async (e)=>{
+            e.stopPropagation();
+            const n = prompt("Новое имя:", s.name);
+            if (!n) return;
+            await setDoc(doc(colStudents(), s.id), {name:n});
+            if (s.id===activeStudentId) $("#studentTitle").textContent = n;
+          };
+
+          const del = document.createElement("button");
+          del.textContent = "🗑";
+          del.title = "Удалить ученика";
+          del.onclick = async (e)=>{
+            e.stopPropagation();
+            if (!confirm(`Удалить «${s.name}» и ВСЕ его оценки?`)) return;
+            await deleteStudentDeep(s.id);
+            if (s.id===activeStudentId) {
+              activeStudentId=null;
+              $("#detail").innerHTML = '<div class="muted">Сначала выберите ученика слева</div>';
+            }
+          };
+
+          row.append(btn, rename, del);
+          box.appendChild(row);
+        });
+      });
+
+      $("#addStudent").onclick = async ()=>{
+        const name = $("#newName").value.trim(); if(!name) return;
+        const newRef = doc(colStudents());
+        await setDoc(newRef, {name});
+        $("#newName").value="";
+      };
+    }
+
+    async function deleteStudentDeep(studentId){
+      const batch = writeBatch(db);
+      const gradesSnap = await getDocs(gradesCol(studentId));
+      gradesSnap.forEach(d=> batch.delete(d.ref));
+      const subjSnap = await getDocs(subjectsCol(studentId));
+      subjSnap.forEach(d=> batch.delete(d.ref));
+      batch.delete(doc(colStudents(), studentId));
+      await batch.commit();
+    }
+
+    // helper: делаем ID документа из даты и предмета, чтобы была уникальность
+    const idFrom = (date, subject) => `${date}__${(subject||'').replaceAll('/','-')}`;
+
+    function showStudent(studentId){
+      activeStudentId = studentId;
+      const detail = $("#detail");
+      detail.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <h2 id="studentTitle">...</h2>
+          <div class="row" style="margin:0">
+            <select id="filterSubject"><option value="">Все предметы</option></select>
+            <input id="fromDate" type="date"/><span class="muted">—</span><input id="toDate" type="date"/>
+            <button id="btnApplyFilter">Фильтр</button>
+            <button id="btnExport">Экспорт CSV</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <input id="dateInput" type="date"/>
+          <select id="subjectSelect"><option value="">Выберите предмет</option></select>
+          <input id="newSubject" placeholder="Новый предмет"/>
+          <button id="addSubject">＋</button>
+        </div>
+        <div class="row">
+          <input id="gradeInput" type="number" step="0.1" min="1" max="5" placeholder="оценка"/>
+          <button id="btnSet" class="primary">Поставить/заменить</button>
+        </div>
+        <div class="row">
+          <button id="btnAvg">📊 Средний балл</button>
+          <span id="avgOut" class="muted"></span>
+        </div>
+        <table>
+          <thead><tr><th>Дата</th><th>Предмет</th><th>Оценка</th><th></th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      `;
+
+      // заголовок
+      getDoc(doc(colStudents(), studentId)).then(d=>{
+        $("#studentTitle").textContent = d.data()?.name || "Ученик";
+      });
+
+      // подписка на предметы
+      unsubSubjects && unsubSubjects();
+      unsubSubjects = onSnapshot(subjectsCol(studentId), snap=>{
+        subjects = [];
+        snap.forEach(d=> subjects.push(d.id));
+        renderSubjects();
+      });
+
+      function renderSubjects(){
+        const sel = $("#subjectSelect");
+        const filt = $("#filterSubject");
+        sel.innerHTML = '<option value="">Выберите предмет</option>' + subjects.map(s=>`<option>${s}</option>`).join("");
+        filt.innerHTML = '<option value="">Все предметы</option>' + subjects.map(s=>`<option>${s}</option>`).join("");
+      }
+
+      $("#addSubject").onclick = async ()=>{
+        const s = $("#newSubject").value.trim();
+        if(!s) return;
+        await setDoc(doc(subjectsCol(studentId), s), {created: Date.now()});
+        $("#newSubject").value="";
+      };
+
+      // подписка на оценки
+      unsubGrades && unsubGrades();
+      const reloadGrades = ()=>{
+        unsubGrades && unsubGrades();
+        const qBase = query(gradesCol(studentId), orderBy("date"));
+        unsubGrades = onSnapshot(qBase, drawTable);
+      };
+      reloadGrades();
+
+      function drawTable(snap){
+        const rows=[]; let sum=0, n=0;
+        const subjFilter = $("#filterSubject").value;
+        const from = $("#fromDate").value || "0000-00-00";
+        const to   = $("#toDate").value   || "9999-12-31";
+
+        snap.forEach(d=>{
+          const g = { id:d.id, ...d.data() };
+          if (g.date < from || g.date > to) return;
+          if (subjFilter && g.subject !== subjFilter) return;
+          rows.push(g);
+          sum+=Number(g.grade); n++;
+        });
+
+        const tbody = $("#tbody");
+        tbody.innerHTML = rows.map(g=>`
+          <tr>
+            <td>${g.date}</td>
+            <td>${g.subject || ""}</td>
+            <td>${g.grade}</td>
+            <td>
+              <button data-id="${g.id}" class="edit">Поменять</button>
+              <button data-id="${g.id}" class="del">Убрать</button>
+            </td>
+          </tr>`).join("");
+
+        $("#btnAvg").onclick = ()=>{
+          $("#avgOut").textContent = n ? ` = ${(sum/n).toFixed(2)}` : " — нет оценок по фильтру";
+        };
+
+        tbody.querySelectorAll(".del").forEach(b=>{
+          b.onclick = ()=> deleteDoc(doc(gradesCol(studentId), b.dataset.id));
+        });
+
+        tbody.querySelectorAll(".edit").forEach(b=>{
+          b.onclick = async ()=>{
+            const cur = rows.find(r=>r.id===b.dataset.id);
+            const v = prompt(`Новая оценка для ${cur.date} (${cur.subject}):`, String(cur.grade));
+            if(!v) return;
+            const num = Number(String(v).replace(",", "."));
+            if(Number.isNaN(num)) return alert("Нужно число");
+            await setDoc(doc(gradesCol(studentId), b.dataset.id), {date:cur.date, subject:cur.subject, grade:num});
+          };
+        });
+
+        $("#btnExport").onclick = ()=> exportCSV(rows);
+        $("#btnApplyFilter").onclick = ()=> drawTable(snap); // просто перерисуем с новыми фильтрами
+      }
+
+      $("#btnSet").onclick = async ()=>{
+        const d = $("#dateInput").value;
+        const s = $("#subjectSelect").value;
+        const v = $("#gradeInput").value;
+        if(!d || !s || !v) return alert("Нужны дата, предмет и оценка");
+        const num = Number(String(v).replace(",", "."));
+        if(Number.isNaN(num)) return alert("Оценка должна быть числом");
+        const id = idFrom(d, s);
+        await setDoc(doc(gradesCol(studentId), id), {date:d, subject:s, grade:num});
+        $("#gradeInput").value="";
+      };
+    }
+
+    function exportCSV(rows){
+      const header = ["Дата","Предмет","Оценка"];
+      const lines = [header.join(",")].concat(
+        rows.map(r=>[r.date, r.subject||"", r.grade].join(","))
+      );
+      const csv = "\uFEFF" + lines.join("\n");
+      const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "grades.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
